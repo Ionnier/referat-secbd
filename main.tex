@@ -1,0 +1,410 @@
+\documentclass[12pt, a4paper]{report}
+
+\usepackage{polyglossia}
+\usepackage{amsmath} % Advanced math typesetting
+\usepackage[utf8]{inputenc} % Unicode support (Umlauts etc.)
+\usepackage{hyperref} % Add a link to your document
+\usepackage{graphicx} % Add pictures to your document
+\usepackage{listings} % Source code formatting and highlighting
+\usepackage{biblatex}
+\usepackage{titlesec}
+\nocite{*}
+
+
+\usepackage{color}
+\definecolor{lightgray}{rgb}{.9,.9,.9}
+\definecolor{darkgray}{rgb}{.4,.4,.4}
+\definecolor{purple}{rgb}{0.65, 0.12, 0.82}
+
+\lstdefinelanguage{JavaScript}{
+  keywords={typeof, new, true, false, catch, function, return, null, catch, switch, var, if, in, while, do, else, case, break},
+  keywordstyle=\color{blue}\bfseries,
+  ndkeywords={class, export, boolean, throw, implements, import, this},
+  ndkeywordstyle=\color{darkgray}\bfseries,
+  identifierstyle=\color{black},
+  sensitive=false,
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{purple}\ttfamily,
+  stringstyle=\color{red}\ttfamily,
+  morestring=[b]',
+  morestring=[b]"
+}
+
+\lstset{
+   language=JavaScript,
+   backgroundcolor=\color{lightgray},
+   extendedchars=true,
+   basicstyle=\footnotesize\ttfamily,
+   showstringspaces=false,
+   showspaces=false,
+   numbers=left,
+   numberstyle=\footnotesize,
+   numbersep=9pt,
+   tabsize=2,
+   breaklines=true,
+   showtabs=false,
+   captionpos=b
+}
+
+\setdefaultlanguage{romanian}
+\setotherlanguages{english}
+
+% Indentează și primul paragraf al fiecărei noi secțiuni
+\SetLanguageKeys{romanian}{indentfirst=true}
+
+\titleformat{\section}
+  {\bfseries} % format
+  {}                % label
+  {0pt}             % sep
+  {\huge}
+
+\titleformat{\subsection}
+  {\bfseries} 
+  {}                % label
+  {0pt}             % sep
+  {}           % before-code
+
+\addbibresource{bibl.bib}
+\begin{document}
+
+\author{Dragos Bahrim}
+\title{SQL Injection}
+\date{\today{}}
+\maketitle{}
+\tableofcontents
+\section{Abstract}
+
+Această lucrare încearcă să documenteze detalii, scenarii de execuție și metode de prevenire pentru atacurile de tipul SQL Injection.
+
+
+\section{Introducere}
+
+SQL Injection reprezintă un tip de atac care se bazează pe faptul că indiferent de 
+arhitectura aplicației și de baza de date folosită, pentru a obține date trebuie
+rulată o cerere care uneori cere date de intrare de la atacator, care datorită lipsei măsurilor
+de securizare oferă mai mult aces utilizatorului decât ar trebui.
+
+Pentru a răspundere la cererile complexe la care ne așteptăm de la bazele de date, structura acestor cereri
+este foarte versatilă, din acest motiv dacă nu sunt protejate corespunzător un atacator
+poate să folosească cererile scrise incorect pentru a schimba comportamentul sistemului într-un mod nedorit.
+
+\section{Scenarii}
+Cel mai simplu mod în care acest tip de atac se reproduce este reprezentat de nevalidarea
+datelor pe care utilizatorul le introduce.
+
+Considerăm scenariul extrem de ireal în care unui utilizator îi se cere username-ul și parola pentru
+a se autentifica, ca și test, împotriva oricărei recomandare de salvare a datelor confidențiale, 
+parola este păstrată în text simplu în baza de date, astfel pentru a ne autentifica trebuie doar să 
+căutăm după nume și parolă.
+
+\lstset{language=SQL}
+\begin{lstlisting}
+  SELECT *
+  FROM dbahrim.app_users
+  WHERE username = '<VALUE>' and userpassword = '<VALUE>';
+\end{lstlisting}
+
+
+Codul pentru server-ul care face această verificare poate fi următorul
+
+\lstset{language=JavaScript}
+\begin{lstlisting}
+app.post('/login', async (req, res) => {
+    const username = req.body.username
+    const password = req.body.password
+
+    try {
+        const result = await connection.execute(
+            `SELECT *
+                FROM dbahrim.app_users
+                WHERE username = '${username}' and userpassword = '${password}'`,
+        );
+
+        if (result.rows.length > 0) {
+            res.end("Success");
+        } else {
+            res.end("Failure");
+        }
+    } catch (e) {
+        res.json(e).end()
+    }
+})
+\end{lstlisting}
+
+Codul va face un simplu SELECT, dacă se găsește un row cu detaliile 
+introduse este considerată o operațiune cu succes.
+
+Întrucât nicio dată de intrare nu este validată, un atacator poate să dea ce date vrea el, 
+deci poate introduce caractere speciale pentru baza de date ca să manipuleze request-ul și să treacă de validare.
+
+De exemplu
+
+\lstset{language=bash}
+\begin{lstlisting}
+curl --request POST \
+  --url http://localhost:3000/login \
+  --header 'content-type: application/json' \
+  --data '{
+  "username": "'\'' or 1=1--",
+  "password": "dfgdfgdfgfdgfdgdfg"
+}'
+\end{lstlisting}
+
+Codul se traduce in script SQL în
+
+\lstset{language=SQL}
+\begin{lstlisting}
+  SELECT *
+  FROM dbahrim.app_users
+  WHERE username = ''\'' or 1=1-- and userpassword = '<VALUE>';
+\end{lstlisting}
+
+Astfel, atacatorul poate să comenteze o porțiune de verificare prin folosirea
+`--` și să adauge o condiție care mereu va fi adevarată `1=1`.
+
+De asemenea, putem folosii SQL Injection pentru a face rost de informații
+specifice bazei de date, ca după să putem găsii alte exploit-uri.
+Considerăm următorea porțiune de cod care ar fi returnat username-ul unui utilizator.
+
+\lstset{language=JavaScript}
+\begin{lstlisting}
+app.get('/users/:id', async (req, res) => {
+    const id = req.params.id
+    try {
+        const query = `SELECT username
+                FROM dbahrim.app_users
+                WHERE id_user = '${id}'`
+        console.log(query)
+        const result = await connection.execute(
+            query,
+        );
+        res.json(result.rows).end()
+    } catch (e) {
+        res.json(e).end()
+    }
+})
+\end{lstlisting}
+
+Un atacator poate folosii acest tip de cerere pentru a folosii UNION pentru a
+extrage mai mult informații. De exemplu:
+
+\label{exemplush1}
+\lstset{language=bash}
+\begin{lstlisting}
+curl --request GET \
+  --url 'http://localhost:3000/users/1%27%2520UNION%2520select%2520banner%2520from%2520v$version%2520--'
+\end{lstlisting}
+
+Ce va întoarce:
+
+\begin{lstlisting}
+[
+  {
+    "USERNAME": "user1"
+  },
+  {
+    "USERNAME": "Oracle Database 23ai Free Release 23.0.0.0.0 - Develop, Learn, and Run for Free"
+  }
+]
+\end{lstlisting}
+
+\section{Tehnici de protejare}
+\subsection{Client}
+
+Prin client, înțelegem orice aplicație al cărei scop este preluarea date de la 
+utilizator și trimiterea către un server, fie ca este o aplicație web, API sau 
+de mobil.
+
+Principalul scop este prelucrarea datelor înainte de a ajuns la următorul procesator.
+Astfel, putem să impunem un anumit format pentru textele introduse. De exemplu, dacă
+avem un câmp pentru username într-un formular, folosim regex pentru a limita tipul de caractere pe care să le introducem.
+
+
+\lstset{language=html}
+\begin{lstlisting}
+<input type="text" name="username" pattern="[a-zA-Z0-9]+" required>
+\end{lstlisting}
+
+Putem să encodăm caracterele speciale care sunt problematice și să le reînlocuim pe server (de exemplu \& cu \&ampt).
+
+Dacă folosim în formulare câmpuri hidden folosite pentru a găsii elementul
+pe care vrem să îl modificăm ulterior, acesta trebuie limitat pentru a previne oferirea 
+de informații adiționale despre structura bazei de date.
+
+\subsection{Server}
+
+Prin server, înțelegem orice serviciu ce este folosit, fie că este cel cu care comunică 
+clientul, fie un microserviciu intern.
+
+Deoarece clientul poate să scoată validările, toate câmpurile validate pe client, trebuie revalidate și în codul de server, inclusiv dacă este un server care comunică doar cu alte servere.
+
+Fiecare valoare ce vine de la utilizator va trece printr-o serie de funcții sanitaziars,
+de exemplu pentru Node.JS putem folosii \url{https://github.com/pocketly/node-sanitize}
+care ne vor ajuta în îndepărtarea caracterelor care ne-ar compromite cererile SQL. Pentru exemplul 
+\hyperref[exemplush1]{anterior} putem sa modificam cererea de pe server pentru a sanitiza input-ul si sa eliminam lucrurile care par problematice.
+
+\lstset{language=JavaScript}
+\begin{lstlisting}
+  app.get('/users/:id', async (req, res) => {
+    const id = req.params.id
+    console.log(id) // va intoarce 1' UNION select banner from v$version --
+    // ...
+  });
+
+  app.get('/users2/:id', require('sanitize').middleware, async (req, res) => {
+    const id = req.paramInt("id")
+    console.log(id) // va intoarce - 1
+    // ..
+  });
+
+  app.get('/users3/:id', require('sanitize').middleware, async (req, res) => {
+    const id = req.paramString("id")
+    console.log(id) // - 1' UNION select banner from v$version --
+  });
+\end{lstlisting}
+
+In ultimul exemplu, desi folosim acesti sanitizers, nu ne protejeaza atunci cand parsam ca string, caracterele problematice inca ramanand. 
+Pentru asa putem folosii bind variables (in Java, Prepared Statements) 
+pentru a prevenii modificarea query-ului SQL atunci când adăugăm valorile de la utilizator.
+
+\lstset{language=JavaScript}
+\begin{lstlisting}
+app.post('/login', async (req, res) => {
+  const username = req.body.username
+  const password = req.body.password
+
+  try {
+      const result = await connection.execute(
+          `SELECT *
+            FROM dbahrim.app_users
+            WHERE username = :username and userpassword = :password`,
+          { username, password }
+      );
+
+      if (result.rows.length > 0) {
+          res.end("Success");
+      } else {
+          res.end("Failure");
+      }
+  } catch (e) {
+      res.json(e).end()
+  }
+})
+\end{lstlisting}
+
+Folosirea ORM-urilor precum Sequelize pentru Node.JS ne permite să fim mai 
+relaxați cu validarea dateloror de intrare, Întrucâtt ne aștepăm ca aceste tool-uri să 
+fie scrise cu gândul că vor fii folosite de persoane care nu au la fel de multă 
+experiență și vor avea suficiente protecții împotriva SQL Injection.
+
+Pentru a folosii Sequelize declarăm un model ce conține informațiile unui tabel din baza noastră de date.
+
+\lstset{language=JavaScript}
+\begin{lstlisting}
+const AppUsers = sequelize.define(
+  'APP_USERS',
+  {
+      id_user: {
+          type: DataTypes.INTEGER,
+          primaryKey: true,
+      },
+      username: {
+          type: DataTypes.STRING,
+      },
+      userpassword: {
+          type: DataTypes.STRING,
+      },
+  }
+);
+\end{lstlisting}
+
+Prin acest model vom interacționa cu baza de date, Sequelize generând codul SQL.
+
+\lstset{language=JavaScript}
+\begin{lstlisting}
+app.get('/users4/:id', require('sanitize').middleware, async (req, res) => {
+  const id = req.paramString("id")
+
+  console.log(await AppUsers.findAll({where: {
+      id_user: id
+  }}));
+})
+\end{lstlisting}
+
+Se va genera
+
+\lstset{language=JavaScript}
+\begin{lstlisting}
+Executing (default): SELECT "id_user", "username", "userpassword" FROM "APP_USERS"  "APP_USERS" WHERE "APP_USERS"."id_user" = '1'' UNION select banner from v$version --';
+\end{lstlisting}
+
+Observație! Query-ul este gresit datorita unei incompatibilități între versiunea de Sequelize, Oracle.DB și laptop-ul meu.
+
+Ascunderea mesajelor va permite păstrarea informațiilor despre baza de date ascunse,
+astfel mesajele de eroare vor trebui să fie cât mai generice.
+
+\lstset{language=JavaScript}
+\begin{lstlisting}
+app.post('/login', async (req, res) => {
+  const username = req.body.username
+  const password = req.body.password
+
+  try {
+      const result = await connection.execute(
+          `SELECT *
+            FROM dbahrim.app_users
+            WHERE username = :username and userpassword = :password`,
+          { username, password }
+      );
+
+      if (result.rows.length > 0) {
+          res.end("Success");
+      } else {
+          res.end("Failure");
+      }
+  } catch (e) {
+      res.end("Unknown error occured")
+  }
+})
+\end{lstlisting}
+
+
+\subsection{Bază de date}
+
+Prin folosirea de proceduri parametrizate statice PL/SQL putem să prevenim SQL 
+Injection întrucât cererea nu se va schimba, ci doar datele cu care sunt apelate.
+
+Utilizarea de utilizatori ale bazelor de date către serverele care au privilegii limitate (de exemplu,
+nu permit INSERT sau DELETE) vor limita cât de multe probleme un scrip de SQL Injection ar putea cauza. De exemplu, putem crea un utilizator care va fi folosit mereu 
+de către aplicațiile integratoare pentru a comunica cu baza de date, iar acestui user îi oferim privilegii doar de SELECT.
+
+\lstset{language=SQL}
+\begin{lstlisting}
+  CREATE USER new_user IDENTIFIED BY Password1234;
+  GRANT SELECT ON APP_USERS TO new_user;
+  GRANT SELECT ON APP_USERS TO new_user;
+\end{lstlisting}
+
+Limitarea conținutului la care un atacator ar avea acces prin criptarea datelor sensibile. De exemplu, criptarea parolelor, cardurilor, etc. 
+Aceasta se poate face fie la nivel de server fie la nivel de bază de date, dacă baza de date suporta acest lucru.
+
+Validarea datelor de intrare în PL/SQL poate fi folosită prin pachete precum
+DBMS\_ASSERT care ne ajută să prevenim caracterele care ar putea cauza SQL Injection.
+
+Întrucât procedurile stocate sunt apelate implicit cu drepturile creatorului, acestea
+pot oferii privilegii ridicate pentru persoane care pot apela acele proceduri. Astfel, aceste proceduri ar trebui să fie apelate cu drepturile apelantului.
+
+
+\section{Concluzie}
+
+SQL Injection reprezintă una dintre cele mai grave vulnerabilități de securitate care poate compromite integritatea și confidențialitatea datelor stocate într-o bază de date, însă modul în care ne protejăm contra acestea este simplu, nu avem încredere 
+în datele pe care le primim și încercăm în orice loc să le validăm sau să nu le folosim direct în query.
+
+
+
+
+\printbibliography
+
+
+\end{document}
