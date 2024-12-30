@@ -1,7 +1,6 @@
 const oracledb = require('oracledb');
 const express = require('express')
 const { Sequelize, DataTypes, where } = require('sequelize');
-const { singularize } = require('sequelize/lib/utils');
 
 const app = express()
 
